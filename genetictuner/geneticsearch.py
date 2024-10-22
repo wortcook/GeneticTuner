@@ -8,10 +8,43 @@ class GeneticPool:
         self,
         init_size,
         stable_size,
+        cull_rate,
         mutate_prob,
         dominant_crossover_prob,
+        chromo_creator,
     ):
-        self.pool = []
+        self._init_size = init_size
+        self._stable_size = stable_size
+        self._cull_rate = cull_rate
+        self._mutate_prob = mutate_prob
+        self._dominant_crossover_prob = dominant_crossover_prob
+        self._chromo_creator = chromo_creator
+        
+        #populate pool from chromo_creator
+        self._pool = [self._chromo_creator() for _ in range(self._init_size)]
+        self._used_pool = []
+        
+    def get_chromo(self):
+        #if the pool is empty, repopulate it
+        if len(self._pool) == 0:
+            self._repopulate_pool()
+        else:
+            chromo = self._pool.pop(self._pool_index)
+            self._used_pool.append(chromo)
+            return chromo
+        
+    def _repopulate_pool(self):
+        #sort the used pool by fitness
+        self._used_pool.sort(key=lambda x: x.score, reverse=(self.objective.direction == "max"))
+        
+        #remove the worst chromos based on cull rate
+        self._used_pool = self._used_pool[:int(len(self._used_pool) * (1 - self._cull_rate))]
+
+        #do we have an odd number of chromos?
+        if len(self._used_pool) % 2 == 1:
+            #add the worst chromo back in
+            self._pool.append(self._used_pool.pop())        
+
         
         
         
@@ -27,9 +60,9 @@ class GeneticSearchOracle(oracle_module.Oracle):
         tune_new_entries=True,
         max_retries_per_trial=0,
         max_consecutive_failed_trials=3,
-        trials_per_generation=10,
         initial_population_size=20,
         stable_population_size=20,
+        cull_rate=0.2,
         mutate_prob=0.1,
         dominant_crossover_prob=0.5,
     ):
