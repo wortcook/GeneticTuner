@@ -3,6 +3,8 @@ from keras_tuner.engine import oracle as oracle_module
 from keras_tuner.engine import trial as trial_module
 from keras_tuner.engine import tuner as tuner_module
 
+import random
+
 class GeneticPool:
     def __init__(
         self,
@@ -10,6 +12,7 @@ class GeneticPool:
         stable_size,
         cull_rate,
         mutate_prob,
+        backfill_rate,
         dominant_crossover_prob,
         chromo_creator,
     ):
@@ -43,8 +46,39 @@ class GeneticPool:
         #do we have an odd number of chromos?
         if len(self._used_pool) % 2 == 1:
             #add the worst chromo back in
-            self._pool.append(self._used_pool.pop())        
+            self._pool.append(self._used_pool.pop())
+            
+        #crossover the chromos
+        cross_pool = []
+        while len(self._used_pool) > 1:
+            chromo1 = self._used_pool.pop()
+            chromo2 = self._used_pool.pop()
+            
+            if chromo1.score < chromo2.score:
+                chromo1, chromo2 = chromo2, chromo1
+            cross_pool.append(self._crossover(chromo1, chromo2))
+            
+        #mutate the chromos
+        for chromo in cross_pool:
+            self._mutate(chromo)
+            
+        #copy the cross_pool to the pool
+        self._pool = cross_pool.copy()
+        
+        #backfill the pool
+        self._backfill_pool()
+        
+    def _crossover(self, chromo1, chromo2):
+        #walk through the genes of the chromos and randomly select one
+        #from either chromo1 or chromo2
+        new_chromo = self._chromo_creator()
+        
+        
 
+
+        
+
+    def _mutate(self, chromo):
         
         
         
@@ -64,6 +98,7 @@ class GeneticSearchOracle(oracle_module.Oracle):
         stable_population_size=20,
         cull_rate=0.2,
         mutate_prob=0.1,
+        backfill_rate=0.1,
         dominant_crossover_prob=0.5,
     ):
         super().__init__(
