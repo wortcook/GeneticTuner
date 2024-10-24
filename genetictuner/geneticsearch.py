@@ -1,66 +1,71 @@
-from keras_tuner.api_export import keras_tuner_export
 from keras_tuner.engine import oracle as oracle_module
 from keras_tuner.engine import trial as trial_module
 from keras_tuner.engine import tuner as tuner_module
+
+from typing import List
 
 import random
 
 class GeneticPool:
     def __init__(
         self,
-        init_size,
-        stable_size,
-        cull_rate,
-        mutate_prob,
-        backfill_rate,
-        dominant_crossover_prob,
-        chromo_creator,
+        trial_creator,
+        objective : oracle_module.Objective,
+        init_size : int = 100,
+        stable_size : int = 20,
+        dominant_crossover_prob : float = 0.5,
+        backfill_rate : float = 0.2,
+        cull_rate : float = 0.2,
+        mutate_prob : float = 0.1,
     ):
-        self._init_size = init_size
-        self._stable_size = stable_size
-        self._cull_rate = cull_rate
-        self._mutate_prob = mutate_prob
-        self._dominant_crossover_prob = dominant_crossover_prob
-        self._chromo_creator = chromo_creator
+        self._init_size : int = init_size
+        self._stable_size : int = stable_size
+        self._cull_rate : float = cull_rate
+        self._mutate_prob : float = mutate_prob
+        self._dominant_crossover_prob : float = dominant_crossover_prob
+        self._objective = objective
+        self._backfill_rate = backfill_rate
+        self._trial_creator = trial_creator
         
         #populate pool from chromo_creator
-        self._pool = [self._chromo_creator() for _ in range(self._init_size)]
-        self._used_pool = []
+        self._pool : List[trial_module.Trial] = [ self._trial_creator() for _ in range(self._init_size)]
+        self._used_pool : List[trial_module.Trial] = []
         
-    def get_chromo(self):
+    def get_trial(self):
         #if the pool is empty, repopulate it
         if len(self._pool) == 0:
             self._repopulate_pool()
         else:
-            chromo = self._pool.pop(self._pool_index)
-            self._used_pool.append(chromo)
-            return chromo
+            trial = self._pool.pop()
+            self._used_pool.append(trial)
+            return trial
         
     def _repopulate_pool(self):
         #sort the used pool by fitness
-        self._used_pool.sort(key=lambda x: x.score, reverse=(self.objective.direction == "max"))
+        self._used_pool.sort(key=lambda x: x.score, reverse=(self._objective.direction == "max"))
         
         #remove the worst chromos based on cull rate
         self._used_pool = self._used_pool[:int(len(self._used_pool) * (1 - self._cull_rate))]
 
         #do we have an odd number of chromos?
         if len(self._used_pool) % 2 == 1:
-            #add the worst chromo back in
-            self._pool.append(self._used_pool.pop())
+            trial_old = self._used_pool.pop()
+            #Cross so that we have an even number of trials left
+            self._pool.append(self._crossover(self._used_pool[0], trial_old))
             
         #crossover the chromos
         cross_pool = []
         while len(self._used_pool) > 1:
-            chromo1 = self._used_pool.pop()
-            chromo2 = self._used_pool.pop()
+            trial1 = self._used_pool.pop()
+            trial2 = self._used_pool.pop()
             
-            if chromo1.score < chromo2.score:
-                chromo1, chromo2 = chromo2, chromo1
-            cross_pool.append(self._crossover(chromo1, chromo2))
+            if trial1.score < trial2.score:
+                trial1, trial2 = trial2, trial1
+            cross_pool.append(self._crossover(trial1, trial2))
             
         #mutate the chromos
-        for chromo in cross_pool:
-            self._mutate(chromo)
+        for trial in cross_pool:
+            self._mutate(trial)
             
         #copy the cross_pool to the pool
         self._pool = cross_pool.copy()
@@ -68,20 +73,39 @@ class GeneticPool:
         #backfill the pool
         self._backfill_pool()
         
-    def _crossover(self, chromo1, chromo2):
+    def _crossover(self, trial1:trial_module.Trial, trial2:trial_module.Trial):
         #walk through the genes of the chromos and randomly select one
         #from either chromo1 or chromo2
-        new_chromo = self._chromo_creator()
-        
-        
+        new_trial : trial_module.Trial = self._trial_creator()
+
+        for hp in new_trial.hyperparameters.space:
+            if random.random() < self._dominant_crossover_prob:
+                new_trial.values[hp.name] = trial1.values[hp.name]
+            else:
+                new_trial.values[hp.name] = trial2.values[hp.name]
+                
+        return new_trial
+    
+    def _mutate(self, trial:trial_module.Trial):
+        for hp in trial.hyperparameters.space:
+            if random.random() < self._mutate_prob:
+                trial.values[hp.name] = hp.random_sample()
+
+    def _backfill_pool(self):
+        #if the pool is less than the stable target size
+        #backfill with random trials
+        if(len(self._pool) < self._stable_size):
+            while len(self._pool) < self._stable_size:
+                self._pool.append(self._trial_creator())
+        #else we don't want to go over the initial size
+        #so backfill with a percentage of the current pool size
+        elif len(self._pool) < self._init_size:
+            new_len = int(len(self._pool) * (1 + self._backfill_rate))
+            while len(self._pool) < new_len:
+                self._pool.append(self._trial_creator())
+            
 
 
-        
-
-    def _mutate(self, chromo):
-        
-        
-        
 
 class GeneticSearchOracle(oracle_module.Oracle):
     def __init__(
@@ -112,18 +136,62 @@ class GeneticSearchOracle(oracle_module.Oracle):
             max_consecutive_failed_trials=max_consecutive_failed_trials,
         )
         
+        self._pool = GeneticPool(
+            trial_creator=self._random_values(),
+            objective=self.objective,
+            init_size=initial_population_size,
+            stable_size=stable_population_size,
+            cull_rate=cull_rate,
+            mutate_prob=mutate_prob,
+            backfill_rate=backfill_rate,
+            dominant_crossover_prob=dominant_crossover_prob,
+        )
+        
     def populate_space(self, trial_id):
-        
-        values = None
-        
-        if len(self.start_order) == 0:
-            # Use all default values for the first trial.
-            self._ordered_ids.insert(trial_id)
-            hps = self.get_space()
-            values = {
-                hp.name: hp.default
-                for hp in self.get_space().space
-                if hps.is_active(hp)
-            }
-        
+        values = self._pool.get_trial()
+        if values is None:
+            return {"status": trial_module.TrialStatus.STOPPED, "values": None}
+        return {"status": trial_module.TrialStatus.RUNNING, "values": values}
+    
+def class GeneticSearch(tuner_module.Tuner):
+    def __init__(
+        self,
+        hypermodel,
+        objective,
+        max_trials,
+        seed=None,
+        hyperparameters=None,
+        allow_new_entries=True,
+        tune_new_entries=True,
+        max_retries_per_trial=0,
+        max_consecutive_failed_trials=3,
+        initial_population_size=20,
+        stable_population_size=20,
+        cull_rate=0.2,
+        mutate_prob=0.1,
+        backfill_rate=0.1,
+        dominant_crossover_prob=0.5,
+        **kwargs
+    ):
+        oracle = GeneticSearchOracle(
+            objective=objective,
+            max_trials=max_trials,
+            seed=seed,
+            hyperparameters=hyperparameters,
+            allow_new_entries=allow_new_entries,
+            tune_new_entries=tune_new_entries,
+            max_retries_per_trial=max_retries_per_trial,
+            max_consecutive_failed_trials=max_consecutive_failed_trials,
+            initial_population_size=initial_population_size,
+            stable_population_size=stable_population_size,
+            cull_rate=cull_rate,
+            mutate_prob=mutate_prob,
+            backfill_rate=backfill_rate,
+            dominant_crossover_prob=dominant_crossover_prob,
+        )
+        super(GeneticSearch, self).__init__(
+            hypermodel=hypermodel,
+            oracle=oracle,
+            **kwargs
+        )
     
