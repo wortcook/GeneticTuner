@@ -6,9 +6,18 @@ from typing import List
 
 import random
 
+
+#####
+## TO FIX
+## THE CROSSOVER AND MUTATE METHODS IN THE GENETICPOOL CLASS
+## NEED TO DEAL WITH TRIALS SO THAT WE CAN USE THE SCORE TO SORT
+## BUT THE POPULATE METHOD RETURNS A DICTIONARY
+#####
+
 class GeneticPool:
     def __init__(
         self,
+        oracle : oracle_module.Oracle,
         trial_creator,
         objective : oracle_module.Objective,
         init_size : int = 100,
@@ -18,6 +27,7 @@ class GeneticPool:
         cull_rate : float = 0.2,
         mutate_prob : float = 0.1,
     ):
+        self._oracle = oracle
         self._init_size : int = init_size
         self._stable_size : int = stable_size
         self._cull_rate : float = cull_rate
@@ -28,36 +38,36 @@ class GeneticPool:
         self._trial_creator = trial_creator
         
         #populate pool from chromo_creator
-        self._pool : List[trial_module.Trial] = [ self._trial_creator() for _ in range(self._init_size)]
-        self._used_pool : List[trial_module.Trial] = []
+        self._pool :List = [ self._trial_creator() for _ in range(self._init_size)]
+        self._used_pool : List = []
         
-    def get_trial(self):
+    def get_trial(self, trial_id):
         #if the pool is empty, repopulate it
         if len(self._pool) == 0:
             self._repopulate_pool()
-        else:
-            trial = self._pool.pop()
-            self._used_pool.append(trial)
-            return trial
+
+        #get a trial from the pool            
+        trial = self._pool.pop()
+        self._used_pool.append(trial_id)
+        return trial
         
     def _repopulate_pool(self):
-        #sort the used pool by fitness
-        self._used_pool.sort(key=lambda x: x.score, reverse=(self._objective.direction == "max"))
+        
+        used_trials = [self._oracle.trials[trial_id] for trial_id in self._used_pool]
+        used_trials.sort(key=lambda x: x.score, reverse=(self._objective.direction == "max"))
         
         #remove the worst chromos based on cull rate
-        self._used_pool = self._used_pool[:int(len(self._used_pool) * (1 - self._cull_rate))]
+        used_trials = used_trials[:int(len(used_trials) * (1 - self._cull_rate))]
 
         #do we have an odd number of chromos?
-        if len(self._used_pool) % 2 == 1:
-            trial_old = self._used_pool.pop()
-            #Cross so that we have an even number of trials left
-            self._pool.append(self._crossover(self._used_pool[0], trial_old))
+        if len(used_trials) % 2 == 1:
+            self._pool.append(used_trials.pop())
             
         #crossover the chromos
         cross_pool = []
-        while len(self._used_pool) > 1:
-            trial1 = self._used_pool.pop()
-            trial2 = self._used_pool.pop()
+        while len(used_trials) > 1:
+            trial1 = used_trials.pop()
+            trial2 = used_trials.pop()
             
             if trial1.score < trial2.score:
                 trial1, trial2 = trial2, trial1
@@ -72,24 +82,26 @@ class GeneticPool:
         
         #backfill the pool
         self._backfill_pool()
+        self._used_pool = []
         
     def _crossover(self, trial1:trial_module.Trial, trial2:trial_module.Trial):
         #walk through the genes of the chromos and randomly select one
         #from either chromo1 or chromo2
-        new_trial : trial_module.Trial = self._trial_creator()
+        
+        new_trial = self._trial_creator()
 
-        for hp in new_trial.hyperparameters.space:
+        for hp in new_trial.keys():
             if random.random() < self._dominant_crossover_prob:
-                new_trial.values[hp.name] = trial1.values[hp.name]
+                new_trial[hp] = trial1.hyperparameters.values[hp]
             else:
-                new_trial.values[hp.name] = trial2.values[hp.name]
+                new_trial[hp] = trial2.hyperparameters.values[hp]
                 
         return new_trial
     
-    def _mutate(self, trial:trial_module.Trial):
-        for hp in trial.hyperparameters.space:
+    def _mutate(self, trial):
+        for hp in trial.keys():
             if random.random() < self._mutate_prob:
-                trial.values[hp.name] = hp.random_sample()
+                trial[hp] = self._oracle.hyperparameters[hp].random_sample()
 
     def _backfill_pool(self):
         #if the pool is less than the stable target size
@@ -137,7 +149,8 @@ class GeneticSearchOracle(oracle_module.Oracle):
         )
         
         self._pool = GeneticPool(
-            trial_creator=self._random_values(),
+            oracle = self,
+            trial_creator=self._random_values,
             objective=self.objective,
             init_size=initial_population_size,
             stable_size=stable_population_size,
@@ -148,12 +161,12 @@ class GeneticSearchOracle(oracle_module.Oracle):
         )
         
     def populate_space(self, trial_id):
-        values = self._pool.get_trial()
+        values = self._pool.get_trial(trial_id)
         if values is None:
             return {"status": trial_module.TrialStatus.STOPPED, "values": None}
         return {"status": trial_module.TrialStatus.RUNNING, "values": values}
     
-def class GeneticSearch(tuner_module.Tuner):
+class GeneticSearch(tuner_module.Tuner):
     def __init__(
         self,
         hypermodel,
