@@ -53,7 +53,7 @@ class GeneticPool:
         
     def _repopulate_pool(self):
         
-        used_trials = [self._oracle.trials[trial_id] for trial_id in self._used_pool]
+        used_trials = [self._oracle.get_trial(trial_id) for trial_id in self._used_pool]
         used_trials.sort(key=lambda x: x.score, reverse=(self._objective.direction == "max"))
         
         #remove the worst chromos based on cull rate
@@ -65,6 +65,7 @@ class GeneticPool:
             
         #crossover the chromos
         cross_pool = []
+
         while len(used_trials) > 1:
             trial1 = used_trials.pop()
             trial2 = used_trials.pop()
@@ -82,15 +83,15 @@ class GeneticPool:
         
         #backfill the pool
         self._backfill_pool()
+
         self._used_pool = []
-        
+
     def _crossover(self, trial1:trial_module.Trial, trial2:trial_module.Trial):
         #walk through the genes of the chromos and randomly select one
         #from either chromo1 or chromo2
-        
-        new_trial = self._trial_creator()
+        new_trial = {}
 
-        for hp in new_trial.keys():
+        for hp in trial1.hyperparameters.values.keys():
             if random.random() < self._dominant_crossover_prob:
                 new_trial[hp] = trial1.hyperparameters.values[hp]
             else:
@@ -101,7 +102,8 @@ class GeneticPool:
     def _mutate(self, trial):
         for hp in trial.keys():
             if random.random() < self._mutate_prob:
-                trial[hp] = self._oracle.hyperparameters[hp].random_sample()
+                #THIS IS NOT WORKING....FIX!!!!
+                trial[hp] = self._oracle._random_values()[hp]
 
     def _backfill_pool(self):
         #if the pool is less than the stable target size
